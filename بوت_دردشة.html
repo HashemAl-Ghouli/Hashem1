@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>غرفة الدردشة</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--tg-theme-bg-color);
+            color: var(--tg-theme-text-color);
+        }
+        .chat-container {
+            background-color: var(--tg-theme-secondary-bg-color);
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        }
+        .message-bubble {
+            max-width: 80%;
+            padding: 0.75rem;
+            border-radius: 1.5rem;
+            margin-bottom: 0.5rem;
+            position: relative;
+        }
+        .message-sent {
+            background-color: var(--tg-theme-button-color);
+            color: var(--tg-theme-button-text-color);
+            margin-right: auto;
+            border-bottom-left-radius: 0.5rem;
+        }
+        .message-received {
+            background-color: #4a5568; /* Tailwind gray-700 */
+            color: white;
+            margin-left: auto;
+            border-bottom-right-radius: 0.5rem;
+        }
+        #chat-log::-webkit-scrollbar {
+            width: 8px;
+        }
+        #chat-log::-webkit-scrollbar-track {
+            background: var(--tg-theme-secondary-bg-color);
+        }
+        #chat-log::-webkit-scrollbar-thumb {
+            background: var(--tg-theme-hint-color);
+            border-radius: 10px;
+        }
+        #chat-log::-webkit-scrollbar-thumb:hover {
+            background: var(--tg-theme-link-color);
+        }
+    </style>
+</head>
+<body class="flex flex-col min-h-screen transition-colors duration-300 p-4">
+
+    <div id="loading" class="flex flex-col items-center justify-center h-full min-h-[50vh] text-center p-4">
+        <svg class="animate-spin -ml-1 mr-3 h-10 w-10 text-gray-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        <p class="mt-4 text-gray-500">جاري البحث عن شريك...</p>
+    </div>
+
+    <div id="chat-ui" class="flex flex-col flex-grow w-full max-w-2xl mx-auto rounded-lg chat-container hidden">
+        <header class="p-4 border-b border-gray-700">
+            <h1 class="text-xl font-bold">غرفة الدردشة</h1>
+            <p id="status-message" class="text-sm opacity-60 mt-1">متصل بشريك</p>
+        </header>
+
+        <main id="chat-log" class="flex-grow p-4 overflow-y-auto">
+            <!-- Messages will be injected here -->
+        </main>
+
+        <footer class="p-4 border-t border-gray-700 flex items-center gap-2">
+            <input type="text" id="message-input" placeholder="اكتب رسالتك..." class="flex-grow p-3 rounded-full bg-gray-600 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <button id="send-button" class="bg-blue-500 hover:bg-blue-600 text-white p-3 rounded-full transition-colors duration-200">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24" stroke="none" class="w-6 h-6 transform rotate-90">
+                    <path d="M12 21l-12-18h24l-12 18z" />
+                </svg>
+            </button>
+        </footer>
+    </div>
+    
+    <!-- Firebase Libraries -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, onSnapshot, collection, addDoc, getDocs, query, where, runTransaction, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables provided by the Canvas environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let db, auth, userId, unsubscribeFromChat, unsubscribeFromQueue;
+
+        const chatLog = document.getElementById('chat-log');
+        const messageInput = document.getElementById('message-input');
+        const sendButton = document.getElementById('send-button');
+        const loadingScreen = document.getElementById('loading');
+        const chatUI = document.getElementById('chat-ui');
+        const statusMessage = document.getElementById('status-message');
+        
+        // Function to create and display a message bubble
+        function createMessageElement(message, isSent) {
+            const messageEl = document.createElement('div');
+            messageEl.textContent = message.text;
+            messageEl.classList.add(
+                'message-bubble', 
+                'transition-all', 
+                'duration-300',
+                'p-3',
+                'rounded-3xl'
+            );
+            if (isSent) {
+                messageEl.classList.add('message-sent');
+                messageEl.classList.add('self-end');
+                messageEl.style.backgroundColor = Telegram.WebApp.themeParams.button_color;
+                messageEl.style.color = Telegram.WebApp.themeParams.button_text_color;
+            } else {
+                messageEl.classList.add('message-received', 'bg-gray-700', 'text-white', 'self-start');
+            }
+            chatLog.appendChild(messageEl);
+            chatLog.scrollTop = chatLog.scrollHeight;
+        }
+
+        async function initializeAppAndAuth() {
+            if (!firebaseConfig) {
+                console.error("Firebase config is not available. Cannot initialize the app.");
+                return;
+            }
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            
+            try {
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                userId = auth.currentUser.uid;
+                await findOrCreateChatRoom();
+            } catch (error) {
+                console.error("Authentication failed:", error);
+            }
+        }
+
+        async function findOrCreateChatRoom() {
+            // Updated to a valid Firestore path for a document
+            const queueCollectionRef = collection(db, "artifacts", appId, "public", "data", "pairing_queue");
+            const queueDocRef = doc(queueCollectionRef, "singleton");
+            
+            await runTransaction(db, async (transaction) => {
+                const queueDoc = await transaction.get(queueDocRef);
+                
+                if (!queueDoc.exists() || !queueDoc.data().waitingUser) {
+                    // No one is waiting, so this user will wait
+                    transaction.set(queueDocRef, { waitingUser: userId });
+                    statusMessage.textContent = 'جاري البحث عن شريك...';
+                    console.log("No waiting user, placing current user in queue.");
+                    loadingScreen.classList.remove('hidden');
+                    chatUI.classList.add('hidden');
+                    
+                } else {
+                    // A user is waiting, so we create a new chat room
+                    const waitingUserId = queueDoc.data().waitingUser;
+                    
+                    // Create a new chat room document
+                    const chatRoomsRef = collection(db, "artifacts", appId, "public", "data", "chatRooms");
+                    const chatRoomRef = doc(chatRoomsRef);
+                    
+                    transaction.set(chatRoomRef, {
+                        users: [waitingUserId, userId],
+                        createdAt: serverTimestamp()
+                    });
+                    
+                    // Clear the queue
+                    transaction.delete(queueDocRef);
+                    console.log(`Matched with user: ${waitingUserId}, creating chat room: ${chatRoomRef.id}`);
+                    
+                    // Start listening to the new chat room
+                    setupChatListener(chatRoomRef.id);
+                }
+            });
+
+            // After the transaction, listen for queue changes if the user is still waiting
+            if (loadingScreen.classList.contains('hidden')) {
+                return; // User has already been paired
+            }
+            
+            // Listen for queue changes
+            unsubscribeFromQueue = onSnapshot(queueDocRef, (docSnapshot) => {
+                const data = docSnapshot.data();
+                if (!data || !data.waitingUser || data.waitingUser !== userId) {
+                    // This user has been removed from the queue, meaning they were matched
+                    if (unsubscribeFromQueue) {
+                        unsubscribeFromQueue();
+                    }
+                    console.log("User matched, queue listener unsubscribed.");
+
+                    // Find the chat room where this user is a participant
+                    const chatRoomsRef = collection(db, "artifacts", appId, "public", "data", "chatRooms");
+                    const q = query(chatRoomsRef, where("users", "array-contains", userId));
+
+                    getDocs(q).then(querySnapshot => {
+                        querySnapshot.forEach(doc => {
+                            setupChatListener(doc.id);
+                        });
+                    }).catch(error => {
+                        console.error("Error finding chat room:", error);
+                    });
+                }
+            });
+        }
+
+        function setupChatListener(chatRoomId) {
+            console.log(`Setting up listener for chat room: ${chatRoomId}`);
+            loadingScreen.classList.add('hidden');
+            chatUI.classList.remove('hidden');
+            
+            const messagesRef = collection(db, "artifacts", appId, "public", "data", "chatRooms", chatRoomId, "messages");
+            
+            unsubscribeFromChat = onSnapshot(messagesRef, (querySnapshot) => {
+                chatLog.innerHTML = '';
+                const messages = [];
+                querySnapshot.forEach(doc => {
+                    messages.push(doc.data());
+                });
+
+                messages.sort((a, b) => a.timestamp?.toMillis() - b.timestamp?.toMillis());
+                
+                messages.forEach(msg => {
+                    const isSent = msg.senderId === userId;
+                    createMessageElement(msg, isSent);
+                });
+            });
+
+            // Set up sending messages
+            sendButton.onclick = async () => {
+                const text = messageInput.value.trim();
+                if (text) {
+                    await addDoc(collection(db, "artifacts", appId, "public", "data", "chatRooms", chatRoomId, "messages"), {
+                        text: text,
+                        senderId: userId,
+                        timestamp: serverTimestamp()
+                    });
+                    messageInput.value = '';
+                }
+            };
+            
+            // Handle Enter key
+            messageInput.addEventListener('keypress', (event) => {
+                if (event.key === 'Enter') {
+                    sendButton.click();
+                }
+            });
+        }
+
+        window.onload = function() {
+            if (window.Telegram && window.Telegram.WebApp) {
+                Telegram.WebApp.ready();
+                Telegram.WebApp.expand();
+                initializeAppAndAuth();
+            } else {
+                console.error("Telegram Web App API not found.");
+                document.body.innerHTML = `
+                    <div class="p-6 text-center text-red-500">
+                        <p>تطبيق الويب هذا يجب أن يتم تشغيله داخل تطبيق تيليجرام.</p>
+                        <p class="mt-2 text-sm text-white">يرجى التأكد من تشغيل هذا الملف داخل بيئة تيليجرام.</p>
+                    </div>`;
+            }
+        };
+    </script>
+</body>
+</html>
