@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تطبيق تيليجرام</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module" src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js"></script>
+    <script type="module" src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"></script>
+    <script type="module" src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f2f5;
+        }
+        .bg-telegram {
+            background-color: #2c9edb;
+        }
+        .dropdown {
+            position: absolute;
+            width: 100%;
+            max-height: 200px;
+            overflow-y: auto;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            z-index: 10;
+        }
+        .dropdown-item {
+            padding: 12px;
+            cursor: pointer;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .dropdown-item:hover {
+            background-color: #f3f4f6;
+        }
+        .side-menu {
+            transition: transform 0.3s ease-in-out;
+            transform: translateX(100%);
+            z-index: 20;
+        }
+        .side-menu.open {
+            transform: translateX(0);
+        }
+        .overlay {
+            display: none;
+        }
+        .overlay.active {
+            display: block;
+            background-color: rgba(0, 0, 0, 0.5);
+        }
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(255, 255, 255, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-left-color: #2c9edb;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .message {
+            max-width: 75%;
+            padding: 12px 16px;
+            border-radius: 20px;
+            word-wrap: break-word;
+        }
+        .my-message {
+            background-color: #2c9edb;
+            color: white;
+            border-bottom-right-radius: 4px;
+            align-self: flex-end;
+        }
+        .their-message {
+            background-color: #e5e7eb;
+            color: #1f2937;
+            border-bottom-left-radius: 4px;
+            align-self: flex-start;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen bg-gray-100">
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, getDocs, addDoc, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Firebase Initialization ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        let currentUserId = null;
+        let currentUserData = null;
+        let currentChatId = null;
+        let currentChatUser = null;
+        let isSideMenuOpen = false;
+        let appState = 'loading';
+
+        // --- Firestore Paths ---
+        const PUBLIC_DATA_PATH = `/artifacts/${appId}/public/data`;
+        const USERS_COLLECTION = `${PUBLIC_DATA_PATH}/users`;
+        const CHATS_COLLECTION = `${PUBLIC_DATA_PATH}/chats`;
+
+        // --- App State & UI Management ---
+        const appContainer = document.getElementById('app-container');
+
+        const setLoading = (isLoading) => {
+            if (isLoading) {
+                appContainer.innerHTML = `<div class="loading-overlay"><div class="spinner"></div></div>`;
+            } else {
+                const loadingOverlay = document.querySelector('.loading-overlay');
+                if (loadingOverlay) {
+                    loadingOverlay.remove();
+                }
+            }
+        };
+
+        const renderLoginOrRegister = () => {
+            appContainer.innerHTML = `
+                <div id="login-or-register" class="bg-white p-8 rounded-2xl shadow-lg w-full max-w-sm text-center">
+                    <h1 class="text-3xl font-bold mb-6 text-gray-800">مرحباً بك</h1>
+                    <button id="login-button" class="bg-blue-500 text-white w-full py-3 px-4 mb-4 rounded-xl hover:bg-blue-600 transition-colors duration-200 shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50">تسجيل الدخول</button>
+                    <button id="register-button" class="bg-gray-200 text-gray-800 w-full py-3 px-4 rounded-xl hover:bg-gray-300 transition-colors duration-200 shadow-md focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-opacity-50">إنشاء حساب جديد</button>
+                </div>
+            `;
+            document.getElementById('login-button').addEventListener('click', () => {
+                appState = 'login';
+                renderUI();
+            });
+            document.getElementById('register-button').addEventListener('click', () => {
+                appState = 'register';
+                renderUI();
+            });
+        };
+
+        const renderLogin = () => {
+            appContainer.innerHTML = `
+                <div id="login-form" class="bg-white p-8 rounded-2xl shadow-lg w-full max-w-sm">
+                    <h2 class="text-2xl font-bold mb-6 text-center text-gray-800">تسجيل الدخول</h2>
+                    <input type="text" id="login-username" placeholder="اسم المستخدم" class="w-full p-3 mb-4 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all">
+                    <input type="password" id="login-password" placeholder="كلمة المرور" class="w-full p-3 mb-6 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all">
+                    <button id="login-submit" class="bg-blue-500 text-white w-full py-3 rounded-lg font-semibold hover:bg-blue-600 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50">دخول</button>
+                    <button id="back-to-home" class="mt-4 text-sm text-gray-500 hover:text-gray-700 transition-colors duration-200">العودة</button>
+                    <div id="login-error" class="text-red-500 text-sm mt-4 text-center"></div>
+                </div>
+            `;
+            document.getElementById('login-submit').addEventListener('click', handleLogin);
+            document.getElementById('back-to-home').addEventListener('click', () => {
+                appState = 'login_or_register';
+                renderUI();
+            });
+        };
+
+        const renderRegister = () => {
+            appContainer.innerHTML = `
+                <div id="register-form" class="bg-white p-8 rounded-2xl shadow-lg w-full max-w-sm">
+                    <h2 class="text-2xl font-bold mb-6 text-center text-gray-800">إنشاء حساب جديد</h2>
+                    <div class="flex gap-2 mb-4">
+                        <input type="text" id="register-first-name" placeholder="الاسم" class="w-1/2 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <input type="text" id="register-last-name" placeholder="اسم العائلة" class="w-1/2 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <input type="text" id="register-username" placeholder="اسم المستخدم" class="w-full p-3 mb-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <div id="username-status" class="text-sm mb-4"></div>
+                    <input type="password" id="register-password" placeholder="كلمة المرور" class="w-full p-3 mb-4 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <input type="password" id="register-confirm-password" placeholder="تأكيد كلمة المرور" class="w-full p-3 mb-6 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <button id="register-submit" class="bg-blue-500 text-white w-full py-3 rounded-lg font-semibold hover:bg-blue-600 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50">إنشاء الحساب</button>
+                    <button id="back-to-home" class="mt-4 text-sm text-gray-500 hover:text-gray-700 transition-colors duration-200">العودة</button>
+                    <div id="register-error" class="text-red-500 text-sm mt-4 text-center"></div>
+                </div>
+            `;
+            document.getElementById('register-username').addEventListener('input', checkUsernameAvailability);
+            document.getElementById('register-submit').addEventListener('click', handleRegister);
+            document.getElementById('back-to-home').addEventListener('click', () => {
+                appState = 'login_or_register';
+                renderUI();
+            });
+        };
+
+        const renderChatList = async () => {
+            appContainer.innerHTML = `
+                <div class="flex h-screen w-full max-w-4xl rounded-2xl shadow-xl overflow-hidden relative">
+                    <!-- Chats List View -->
+                    <div class="w-full bg-white flex flex-col relative z-10">
+                        <div class="p-4 bg-telegram text-white flex justify-between items-center">
+                            <h2 class="text-xl font-bold">المحادثات</h2>
+                            <button id="hamburger-menu" class="text-white focus:outline-none">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-6 h-6">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+                                </svg>
+                            </button>
+                        </div>
+                        <div id="chats-list" class="flex-1 overflow-y-auto">
+                            <!-- Chats will be dynamically added here -->
+                        </div>
+                    </div>
+
+                    <!-- Side Menu -->
+                    <div id="side-menu" class="side-menu fixed top-0 right-0 w-64 h-full bg-white shadow-xl flex flex-col">
+                        <div class="p-4 bg-telegram text-white flex flex-col items-center">
+                            <div id="user-profile-icon" class="w-20 h-20 rounded-full bg-gray-200 flex items-center justify-center text-telegram font-bold text-3xl mb-2"></div>
+                            <div class="flex items-center gap-2 mb-1">
+                                <h3 id="user-profile-name" class="text-lg font-semibold"></h3>
+                            </div>
+                            <p id="user-profile-username" class="text-sm font-light text-gray-200"></p>
+                            <div class="text-xs text-gray-300 mt-2 text-center break-all">
+                                <span>معرف المستخدم: </span>
+                                <span id="user-profile-id" class="font-mono"></span>
+                            </div>
+                        </div>
+                        <nav class="flex-1 p-4">
+                            <ul class="space-y-2">
+                                <li>
+                                    <button id="profile-link" class="flex items-center gap-4 w-full p-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors duration-200">
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-6 h-6">
+                                            <path fill-rule="evenodd" d="M7.5 6a4.5 4.5 0 1 1 9 0 4.5 4.5 0 0 1-9 0ZM3.751 20.105a8.25 8.25 0 0 1 16.498 0 .75.75 0 0 1-.726.737A8.25 8.25 0 0 1 12 21.75a8.25 8.25 0 0 1-8.307-8.908.75.75 0 0 1 .726-.737Z" clip-rule="evenodd" />
+                                        </svg>
+                                        ملفي الشخصي
+                                    </button>
+                                </li>
+                                <li>
+                                    <button id="users-list-link" class="flex items-center gap-4 w-full p-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors duration-200">
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-6 h-6">
+                                            <path d="M4.5 6.375a3.375 3.375 0 1 1 6.75 0 3.375 3.375 0 0 1-6.75 0ZM14.755 11.25a.75.75 0 0 1 .75-.75h2.25a.75.75 0 0 1 0 1.5H15.505a.75.75 0 0 1-.75-.75Zm-.75 4.5a.75.75 0 0 1 .75-.75h2.25a.75.75 0 0 1 0 1.5H15.505a.75.75 0 0 1-.75-.75Zm-.75 3.75a.75.75 0 0 1 .75-.75h2.25a.75.75 0 0 1 0 1.5H15.505a.75.75 0 0 1-.75-.75ZM20.25 6c0 2.22-1.282 4.14-3.155 5.197a6.75 6.75 0 0 0 3.155-5.196Zm-16.5-.75c0-.986.297-1.905.811-2.706a1.5 1.5 0 0 1-.715-1.464l-.063-.063C3.504.606 2.656 0 1.5 0H.75A.75.75 0 0 0 0 .75V2.25C0 3.253.606 4.102 1.5 4.167L1.693 4.25a.75.75 0 0 1-.716 1.465L.75 5.75a.75.75 0 0 1-.75-.75V3.75a1.5 1.5 0 0 1 1.5-1.5h.75c.82 0 1.5.68 1.5 1.5v1.5a.75.75 0 0 1-.75.75ZM12 8.25a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5Zm-8.497.75A4.5 4.5 0 0 0 0 13.5v.75a.75.75 0 0 0 .75.75H12a.75.75 0 0 0 .75-.75V13.5a4.5 4.5 0 0 0-8.497-4.5Z" />
+                                        </svg>
+                                        قائمة المستخدمين
+                                    </button>
+                                </li>
+                            </ul>
+                        </nav>
+                        <div class="p-4 border-t border-gray-200">
+                            <button id="logout-button" class="bg-red-500 text-white w-full py-2 rounded-xl">تسجيل الخروج</button>
+                        </div>
+                    </div>
+                    <div id="side-menu-overlay" class="overlay fixed inset-0 z-10"></div>
+                </div>
+            `;
+            const profileIcon = document.getElementById('user-profile-icon');
+            if (currentUserData.profilePicture) {
+                profileIcon.innerHTML = `<img src="${currentUserData.profilePicture}" alt="صورة الملف الشخصي" class="w-full h-full object-cover rounded-full">`;
+            } else {
+                profileIcon.textContent = currentUserData.username.charAt(0).toUpperCase();
+            }
+            document.getElementById('user-profile-name').textContent = `${currentUserData.firstName} ${currentUserData.lastName}`;
+            document.getElementById('user-profile-username').textContent = `@${currentUserData.username}`;
+            document.getElementById('user-profile-id').textContent = currentUserId;
+
+            document.getElementById('hamburger-menu').addEventListener('click', toggleSideMenu);
+            document.getElementById('side-menu-overlay').addEventListener('click', toggleSideMenu);
+            document.getElementById('logout-button').addEventListener('click', handleLogout);
+            document.getElementById('profile-link').addEventListener('click', () => {
+                appState = 'profile';
+                renderUI();
+            });
+            document.getElementById('users-list-link').addEventListener('click', () => {
+                appState = 'users_list';
+                renderUI();
+            });
+
+            fetchUsersAndRenderChats();
+        };
+
+        const renderChatConversation = async () => {
+            const chatHeader = `
+                <div id="chat-header" class="p-4 bg-white border-b border-gray-200 flex items-center gap-4 shadow-sm">
+                    <button id="back-to-list" class="text-gray-500 hover:text-gray-700 transition-colors duration-200">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-6 h-6">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
+                        </svg>
+                    </button>
+                    <div class="flex items-center gap-4 flex-grow">
+                        <div class="w-10 h-10 rounded-full bg-gray-300 flex items-center justify-center text-gray-600 font-bold">
+                            ${currentChatUser.username.charAt(0).toUpperCase()}
+                        </div>
+                        <h3 id="current-chat-name" class="text-lg font-semibold">${currentChatUser.firstName} ${currentChatUser.lastName}</h3>
+                    </div>
+                </div>
+            `;
+            appContainer.innerHTML = `
+                <div class="flex h-screen w-full max-w-4xl rounded-2xl shadow-xl overflow-hidden relative">
+                    <div class="flex flex-1 flex-col bg-gray-50">
+                        ${chatHeader}
+                        <div id="messages-container" class="flex-1 overflow-y-auto p-4 flex flex-col-reverse">
+                            <!-- Messages will be dynamically added here -->
+                        </div>
+                        <div id="message-input-area" class="p-4 bg-white border-t border-gray-200 flex items-center gap-2">
+                            <input type="text" id="message-input" placeholder="اكتب رسالة..." class="flex-1 p-3 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <button id="send-button" class="bg-blue-500 text-white p-3 rounded-full hover:bg-blue-600 transition-colors duration-200">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6 rotate-90">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('back-to-list').addEventListener('click', () => {
+                appState = 'chat_list';
+                renderUI();
+            });
+            document.getElementById('send-button').addEventListener('click', sendMessage);
+            document.getElementById('message-input').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    sendMessage();
+                }
+            });
+            listenForMessages();
+        };
+
+        const renderProfile = () => {
+            appContainer.innerHTML = `
+                <div class="bg-white p-8 rounded-2xl shadow-lg w-full max-w-lg">
+                    <h2 class="text-2xl font-bold mb-6 text-center text-gray-800">تعديل الملف الشخصي</h2>
+                    <div class="flex flex-col items-center mb-6">
+                        <div id="profile-picture-container" class="w-32 h-32 rounded-full overflow-hidden bg-gray-200 flex items-center justify-center text-gray-600 font-bold text-5xl cursor-pointer relative">
+                            ${currentUserData.profilePicture ? `<img src="${currentUserData.profilePicture}" alt="صورة الملف الشخصي" class="w-full h-full object-cover">` : currentUserData.username.charAt(0).toUpperCase()}
+                            <label for="profile-picture-input" class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-40 text-white opacity-0 hover:opacity-100 transition-opacity duration-200">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-8 h-8">
+                                  <path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.678.535a.625.625 0 0 1-.72-.72l.535-2.678a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" />
+                                </svg>
+                            </label>
+                            <input type="file" id="profile-picture-input" class="hidden" accept="image/*">
+                        </div>
+                        <p class="text-sm text-gray-500 mt-2">اضغط لتغيير الصورة</p>
+                    </div>
+                    <form id="profile-form" class="space-y-4">
+                        <div class="flex gap-4">
+                            <div class="w-1/2">
+                                <label for="firstName" class="block text-sm font-medium text-gray-700">الاسم الأول</label>
+                                <input type="text" id="firstName" value="${currentUserData.firstName}" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                            </div>
+                            <div class="w-1/2">
+                                <label for="lastName" class="block text-sm font-medium text-gray-700">اسم العائلة</label>
+                                <input type="text" id="lastName" value="${currentUserData.lastName}" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                            </div>
+                        </div>
+                        <div>
+                            <label for="username" class="block text-sm font-medium text-gray-700">اسم المستخدم</label>
+                            <input type="text" id="username" value="${currentUserData.username}" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                            <div id="username-status" class="text-sm mt-1"></div>
+                        </div>
+                        <div>
+                            <label for="bio" class="block text-sm font-medium text-gray-700">نبذة تعريفية</label>
+                            <textarea id="bio" rows="3" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">${currentUserData.bio || ''}</textarea>
+                        </div>
+                        <div id="profile-error" class="text-red-500 text-sm text-center"></div>
+                        <div class="flex gap-4">
+                            <button type="submit" id="save-profile" class="flex-1 bg-blue-500 text-white py-2 rounded-xl font-semibold hover:bg-blue-600 transition-colors duration-200">حفظ التغييرات</button>
+                            <button type="button" id="back-from-profile" class="flex-1 bg-gray-300 text-gray-800 py-2 rounded-xl font-semibold hover:bg-gray-400 transition-colors duration-200">إلغاء</button>
+                        </div>
+                    </form>
+                </div>
+            `;
+            document.getElementById('back-from-profile').addEventListener('click', () => {
+                appState = 'chat_list';
+                renderUI();
+            });
+            document.getElementById('profile-picture-input').addEventListener('change', handleProfilePictureChange);
+            document.getElementById('profile-form').addEventListener('submit', handleProfileUpdate);
+            document.getElementById('username').addEventListener('input', checkUsernameAvailability);
+        };
+
+        const renderUsersList = async () => {
+            setLoading(true);
+            const users = [];
+            const usersQuery = query(collection(db, USERS_COLLECTION));
+            const querySnapshot = await getDocs(usersQuery);
+            querySnapshot.forEach(doc => {
+                const userData = doc.data();
+                if (doc.id !== currentUserId) {
+                    users.push({ id: doc.id, ...userData });
+                }
+            });
+            setLoading(false);
+
+            const usersListHtml = users.map(user => `
+                <button data-user-id="${user.id}" class="user-item flex items-center p-4 border-b border-gray-200 w-full text-right cursor-pointer hover:bg-gray-100 transition-colors duration-200">
+                    <div class="w-10 h-10 rounded-full bg-gray-300 flex items-center justify-center text-gray-600 font-bold">${user.username.charAt(0).toUpperCase()}</div>
+                    <div class="ml-4 flex-1">
+                        <h4 class="font-semibold">${user.firstName} ${user.lastName}</h4>
+                        <p class="text-sm text-gray-500">@${user.username}</p>
+                    </div>
+                </button>
+            `).join('');
+
+            appContainer.innerHTML = `
+                <div class="bg-white p-8 rounded-2xl shadow-lg w-full max-w-sm">
+                    <h2 class="text-2xl font-bold mb-6 text-center text-gray-800">قائمة المستخدمين</h2>
+                    <div class="max-h-96 overflow-y-auto">
+                        ${usersListHtml}
+                    </div>
+                    <button id="back-from-users" class="bg-blue-500 text-white w-full py-3 rounded-lg font-semibold hover:bg-blue-600 transition-colors duration-200 mt-6">العودة إلى المحادثات</button>
+                </div>
+            `;
+            document.getElementById('back-from-users').addEventListener('click', () => {
+                appState = 'chat_list';
+                renderUI();
+            });
+
+            document.querySelectorAll('.user-item').forEach(button => {
+                button.addEventListener('click', async (event) => {
+                    const userId = event.currentTarget.dataset.userId;
+                    const userRef = doc(db, USERS_COLLECTION, userId);
+                    const userSnap = await getDoc(userRef);
+                    if (userSnap.exists()) {
+                        currentChatUser = { id: userId, ...userSnap.data() };
+                        currentChatId = getChatId(currentUserId, userId);
+                        appState = 'chat_conversation';
+                        renderUI();
+                    }
+                });
+            });
+        };
+
+        const toggleSideMenu = () => {
+            isSideMenuOpen = !isSideMenuOpen;
+            const sideMenu = document.getElementById('side-menu');
+            const overlay = document.getElementById('side-menu-overlay');
+            if (sideMenu && overlay) {
+                if (isSideMenuOpen) {
+                    sideMenu.classList.add('open');
+                    overlay.classList.add('active');
+                } else {
+                    sideMenu.classList.remove('open');
+                    overlay.classList.remove('active');
+                }
+            }
+        };
+
+        const renderUI = () => {
+            setLoading(false);
+            switch (appState) {
+                case 'login_or_register':
+                    renderLoginOrRegister();
+                    break;
+                case 'login':
+                    renderLogin();
+                    break;
+                case 'register':
+                    renderRegister();
+                    break;
+                case 'chat_list':
+                    renderChatList();
+                    break;
+                case 'chat_conversation':
+                    renderChatConversation();
+                    break;
+                case 'profile':
+                    renderProfile();
+                    break;
+                case 'users_list':
+                    renderUsersList();
+                    break;
+                case 'loading':
+                    setLoading(true);
+                    break;
+            }
+        };
+
+        // --- Data & Logic Functions ---
+        const handleLogin = async () => {
+            const username = document.getElementById('login-username').value;
+            const password = document.getElementById('login-password').value;
+            const errorElement = document.getElementById('login-error');
+            errorElement.textContent = '';
+
+            if (!username || !password) {
+                errorElement.textContent = 'الرجاء إدخال اسم المستخدم وكلمة المرور.';
+                return;
+            }
+
+            setLoading(true);
+            try {
+                const usersQuery = query(collection(db, USERS_COLLECTION), where("username", "==", username), where("password", "==", password));
+                const querySnapshot = await getDocs(usersQuery);
+                setLoading(false);
+
+                if (!querySnapshot.empty) {
+                    const userDoc = querySnapshot.docs[0];
+                    currentUserId = userDoc.id;
+                    currentUserData = userDoc.data();
+                    appState = 'chat_list';
+                    renderUI();
+                } else {
+                    errorElement.textContent = 'اسم المستخدم أو كلمة المرور غير صحيحة.';
+                }
+            } catch (error) {
+                console.error("Login Error:", error);
+                errorElement.textContent = 'حدث خطأ أثناء تسجيل الدخول. يرجى المحاولة مرة أخرى.';
+                setLoading(false);
+            }
+        };
+
+        const checkUsernameAvailability = async () => {
+            const username = document.getElementById('register-username') ? document.getElementById('register-username').value : document.getElementById('username').value;
+            const statusElement = document.getElementById('username-status');
+            if (!statusElement) return false;
+
+            statusElement.textContent = 'التحقق...';
+
+            if (username.length < 3) {
+                statusElement.textContent = 'اسم المستخدم قصير جداً.';
+                statusElement.className = 'text-red-500 text-sm mt-1';
+                return false;
+            }
+
+            const usersQuery = query(collection(db, USERS_COLLECTION), where("username", "==", username));
+            const querySnapshot = await getDocs(usersQuery);
+
+            const userExists = !querySnapshot.empty && querySnapshot.docs[0].id !== currentUserId;
+
+            if (userExists) {
+                statusElement.textContent = 'اسم المستخدم غير متاح.';
+                statusElement.className = 'text-red-500 text-sm mt-1';
+                return false;
+            } else {
+                statusElement.textContent = 'اسم المستخدم متاح!';
+                statusElement.className = 'text-green-500 text-sm mt-1';
+                return true;
+            }
+        };
+
+        const handleRegister = async () => {
+            const firstName = document.getElementById('register-first-name').value;
+            const lastName = document.getElementById('register-last-name').value;
+            const username = document.getElementById('register-username').value;
+            const password = document.getElementById('register-password').value;
+            const confirmPassword = document.getElementById('register-confirm-password').value;
+            const errorElement = document.getElementById('register-error');
+            errorElement.textContent = '';
+
+            if (!firstName || !lastName || !username || !password || !confirmPassword) {
+                errorElement.textContent = 'الرجاء ملء جميع الحقول.';
+                return;
+            }
+            if (password !== confirmPassword) {
+                errorElement.textContent = 'كلمة المرور وتأكيدها لا يتطابقان.';
+                return;
+            }
+            if (password.length < 6) {
+                errorElement.textContent = 'يجب أن تكون كلمة المرور 6 أحرف على الأقل.';
+                return;
+            }
+
+            setLoading(true);
+            const isUsernameAvailable = await checkUsernameAvailability();
+            if (!isUsernameAvailable) {
+                errorElement.textContent = 'اسم المستخدم غير متاح.';
+                setLoading(false);
+                return;
+            }
+
+            try {
+                const newUserRef = doc(db, USERS_COLLECTION, currentUserId);
+                const newUser = {
+                    firstName,
+                    lastName,
+                    username,
+                    password,
+                    createdAt: new Date().toISOString(),
+                    profilePicture: null,
+                    bio: ''
+                };
+                await setDoc(newUserRef, newUser);
+                currentUserData = newUser;
+                appState = 'chat_list';
+                renderUI();
+                setLoading(false);
+            } catch (error) {
+                console.error("Register Error:", error);
+                errorElement.textContent = 'حدث خطأ أثناء إنشاء الحساب. يرجى المحاولة مرة أخرى.';
+                setLoading(false);
+            }
+        };
+
+        const handleLogout = async () => {
+            const confirmationModal = document.createElement('div');
+            confirmationModal.className = 'fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50';
+            confirmationModal.innerHTML = `
+                <div class="bg-white p-6 rounded-lg shadow-lg text-center">
+                    <p class="text-lg mb-4">هل أنت متأكد من أنك تريد تسجيل الخروج؟</p>
+                    <button id="confirm-logout" class="bg-red-500 text-white px-4 py-2 rounded-lg mr-2">تأكيد</button>
+                    <button id="cancel-logout" class="bg-gray-300 text-gray-800 px-4 py-2 rounded-lg">إلغاء</button>
+                </div>
+            `;
+            document.body.appendChild(confirmationModal);
+            document.getElementById('confirm-logout').addEventListener('click', async () => {
+                await auth.signOut();
+                document.body.removeChild(confirmationModal);
+                currentUserId = null;
+                currentUserData = null;
+                appState = 'login_or_register';
+                renderUI();
+            });
+            document.getElementById('cancel-logout').addEventListener('click', () => {
+                document.body.removeChild(confirmationModal);
+            });
+        };
+
+        const handleProfilePictureChange = (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const profilePictureContainer = document.getElementById('profile-picture-container');
+                    profilePictureContainer.innerHTML = `<img src="${e.target.result}" alt="صورة الملف الشخصي" class="w-full h-full object-cover rounded-full">`;
+                };
+                reader.readAsDataURL(file);
+            }
+        };
+
+        const handleProfileUpdate = async (event) => {
+            event.preventDefault();
+            const errorElement = document.getElementById('profile-error');
+            errorElement.textContent = '';
+            
+            const firstName = document.getElementById('firstName').value;
+            const lastName = document.getElementById('lastName').value;
+            const username = document.getElementById('username').value;
+            const bio = document.getElementById('bio').value;
+            const profilePictureInput = document.getElementById('profile-picture-input');
+            
+            if (!firstName || !lastName || !username) {
+                errorElement.textContent = 'الرجاء ملء جميع الحقول المطلوبة.';
+                return;
+            }
+
+            setLoading(true);
+            const isUsernameAvailable = await checkUsernameAvailability();
+            if (!isUsernameAvailable) {
+                errorElement.textContent = 'اسم المستخدم غير متاح.';
+                setLoading(false);
+                return;
+            }
+            
+            const userRef = doc(db, USERS_COLLECTION, currentUserId);
+            const updatedData = {
+                firstName,
+                lastName,
+                username,
+                bio,
+            };
+
+            try {
+                if (profilePictureInput.files && profilePictureInput.files[0]) {
+                    const reader = new FileReader();
+                    reader.onload = async (e) => {
+                        updatedData.profilePicture = e.target.result;
+                        await updateDoc(userRef, updatedData);
+                        await fetchUserData();
+                        appState = 'chat_list';
+                        renderUI();
+                        showMessageBox('تم تحديث الملف الشخصي بنجاح!');
+                        setLoading(false);
+                    };
+                    reader.readAsDataURL(profilePictureInput.files[0]);
+                } else {
+                    await updateDoc(userRef, updatedData);
+                    await fetchUserData();
+                    appState = 'chat_list';
+                    renderUI();
+                    showMessageBox('تم تحديث الملف الشخصي بنجاح!');
+                    setLoading(false);
+                }
+            } catch (error) {
+                console.error("Profile Update Error:", error);
+                errorElement.textContent = 'حدث خطأ أثناء تحديث الملف الشخصي. يرجى المحاولة مرة أخرى.';
+                setLoading(false);
+            }
+        };
+
+        const showMessageBox = (message) => {
+            const messageBox = document.createElement('div');
+            messageBox.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-md transition-opacity duration-300 opacity-0 z-50';
+            messageBox.textContent = message;
+            document.body.appendChild(messageBox);
+            setTimeout(() => {
+                messageBox.classList.add('opacity-100');
+            }, 10);
+            setTimeout(() => {
+                messageBox.classList.remove('opacity-100');
+                setTimeout(() => {
+                    if (document.body.contains(messageBox)) {
+                        document.body.removeChild(messageBox);
+                    }
+                }, 300);
+            }, 3000);
+        };
+
+        const fetchUsersAndRenderChats = async () => {
+            setLoading(true);
+            const chatsList = document.getElementById('chats-list');
+            if (!chatsList) return;
+            chatsList.innerHTML = '';
+            
+            const usersQuery = query(collection(db, USERS_COLLECTION));
+            const querySnapshot = await getDocs(usersQuery);
+            const allUsers = [];
+            querySnapshot.forEach(doc => {
+                const userData = doc.data();
+                if (doc.id !== currentUserId) {
+                    allUsers.push({ id: doc.id, ...userData });
+                }
+            });
+
+            allUsers.forEach((user) => {
+                const chatItem = document.createElement('div');
+                chatItem.className = 'flex items-center p-4 border-b border-gray-200 cursor-pointer hover:bg-gray-100 transition-colors duration-200';
+                
+                const profilePictureHtml = user.profilePicture ? `<img src="${user.profilePicture}" alt="صورة الملف الشخصي" class="w-10 h-10 object-cover rounded-full">` :
+                    `<div class="w-10 h-10 rounded-full bg-gray-300 flex items-center justify-center text-gray-600 font-bold text-lg">
+                        ${user.username.charAt(0).toUpperCase()}
+                    </div>`;
+
+                chatItem.innerHTML = `
+                    ${profilePictureHtml}
+                    <div class="ml-4 flex-1">
+                        <h4 class="font-semibold">${user.firstName} ${user.lastName}</h4>
+                        <p class="text-sm text-gray-500 truncate">@${user.username}</p>
+                    </div>
+                `;
+                chatItem.addEventListener('click', () => {
+                    currentChatUser = user;
+                    currentChatId = getChatId(currentUserId, user.id);
+                    appState = 'chat_conversation';
+                    renderUI();
+                });
+                chatsList.appendChild(chatItem);
+            });
+            setLoading(false);
+        };
+
+        const listenForMessages = () => {
+            if (!currentChatId) return;
+            const messagesRef = collection(db, `${CHATS_COLLECTION}/${currentChatId}/messages`);
+            const messagesContainer = document.getElementById('messages-container');
+            if (!messagesContainer) return;
+            
+            onSnapshot(messagesRef, (querySnapshot) => {
+                messagesContainer.innerHTML = '';
+                const messages = [];
+                querySnapshot.forEach(doc => {
+                    messages.push(doc.data());
+                });
+                messages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+                messages.forEach(msg => {
+                    const isMyMessage = msg.senderId === currentUserId;
+                    const messageClass = isMyMessage ? 'my-message' : 'their-message';
+                    const messageElement = document.createElement('div');
+                    messageElement.className = `message my-1 shadow-sm ${messageClass}`;
+                    messageElement.textContent = msg.content;
+                    messagesContainer.appendChild(messageElement);
+                });
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            });
+        };
+
+        const sendMessage = async () => {
+            const input = document.getElementById('message-input');
+            if (!input) return;
+            const text = input.value.trim();
+            if (text === '' || !currentChatId) return;
+
+            const chatMessagesRef = collection(db, `${CHATS_COLLECTION}/${currentChatId}/messages`);
+            try {
+                await addDoc(chatMessagesRef, {
+                    senderId: currentUserId,
+                    content: text,
+                    timestamp: new Date().toISOString()
+                });
+                input.value = '';
+            } catch (error) {
+                console.error("Send Message Error:", error);
+                showMessageBox('حدث خطأ أثناء إرسال الرسالة.');
+            }
+        };
+
+        const getChatId = (user1, user2) => {
+            return user1 > user2 ? `${user1}_${user2}` : `${user2}_${user1}`;
+        };
+
+        const fetchUserData = async () => {
+            if (!currentUserId) return;
+            const userRef = doc(db, USERS_COLLECTION, currentUserId);
+            const userSnap = await getDoc(userRef);
+            if (userSnap.exists()) {
+                currentUserData = userSnap.data();
+            } else {
+                currentUserData = null;
+            }
+        };
+
+        // --- Authentication State Listener ---
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                currentUserId = user.uid;
+                await fetchUserData();
+                if (currentUserData) {
+                    appState = 'chat_list';
+                } else {
+                    appState = 'login_or_register';
+                }
+            } else {
+                currentUserId = null;
+                currentUserData = null;
+                appState = 'login_or_register';
+            }
+            renderUI();
+        });
+
+        // Initial sign-in with custom token
+        const initAuth = async () => {
+            setLoading(true);
+            try {
+                if (typeof __initial_auth_token !== 'undefined') {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Firebase Auth Error:", error);
+            }
+            setLoading(false);
+        };
+
+        initAuth();
+    </script>
+
+    <div id="app-container" class="w-full h-full">
+        <!-- The app's UI will be rendered here by JavaScript -->
+    </div>
+
+</body>
+</html>
